@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EmotiScape - HCI Project</title>
+    
+    <link rel="stylesheet" href="style.css">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <div id="dashboard">
+        <h2>Moodboard</h2>
+        <div id="status" class="status-text">The camera is being initialized...<br>(Please allow the browser to invoke the camera)</div>
+        
+        <label>Happy</label>
+        <progress id="bar-happy" class="emotion-bar" value="0" max="100"></progress>
+
+        <label>Sad</label>
+        <progress id="bar-sad" class="emotion-bar" value="0" max="100"></progress>
+
+        <label>Angry</label>
+        <progress id="bar-angry" class="emotion-bar" value="0" max="100"></progress>
+
+        <div id="brain-feedback" style="margin-top: 40px; padding: 15px; background: rgba(0,0,0,0.3); border-radius: 8px; border-left: 4px solid #888; transition: border-color 0.3s ease;">
+            <h3 style="margin-top: 0; font-size: 1.1em; color: #ccc;">🧠 Brain Activity</h3>
+            <p id="brain-text" style="font-size: 0.85em; line-height: 1.6; color: #aaa; margin-bottom: 0;">
+                Homeostasis: The brain is currently in a calm, resting state...
+            </p>
+        </div>
+
+        <div id="action-feedback" style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px; border-left: 4px solid #888; transition: border-color 0.3s ease;">
+            <h3 style="margin-top: 0; font-size: 1.1em; color: #ccc;">💡 System Suggestion</h3>
+            <p id="action-text" style="font-size: 0.85em; line-height: 1.6; color: #aaa; margin-bottom: 0;">
+                Stay relaxed: Keep your natural pace and let your emotions flow freely.
+            </p>
+        </div>
+    </div>
+
+    <video id="webcam" autoplay playsinline style="display: none;"></video>
+
+    <script src="sketch.js"></script>
+
+    <script type="module">
+        import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+
+        const video = document.getElementById("webcam");
+        const statusText = document.getElementById("status");
+        let faceLandmarker;
+        let lastVideoTime = -1;
+
+        let smoothedHappy = 0;
+        let smoothedSad = 0;
+        let smoothedAngry = 0;
+        
+        let currentLockedEmotion = 'neutral'; 
+
+        async function setupVision() {
+            try {
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+                );
+                
+                faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                        delegate: "GPU"
+                    },
+                    outputFaceBlendshapes: true, 
+                    runningMode: "VIDEO",
+                    numFaces: 1
+                });
+
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                video.addEventListener("loadeddata", () => {
+                    statusText.innerText = "The system is running: Facial emotions are being analyzed in real time";
+                    statusText.style.color = "#4CAF50"; 
+                    predictWebcam();
+                });
+            } catch (error) {
+                statusText.innerText = "Error: Unable to access camera or load model.";
+                statusText.style.color = "red";
+                console.error(error);
+            }
+        }
+
+        async function predictWebcam() {
+            let startTimeMs = performance.now();
+            if (lastVideoTime !== video.currentTime) {
+                lastVideoTime = video.currentTime;
+                
+                const results = faceLandmarker.detectForVideo(video, startTimeMs);
+                
+                if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+                    analyzeEmotion(results.faceBlendshapes[0].categories);
+                } else {
+                    updateSmoothedEmotions(0, 0, 0);
+                }
+            }
+            window.requestAnimationFrame(predictWebcam);
+        }
+
+        function analyzeEmotion(blendshapes) {
+            const shapes = {};
+            blendshapes.forEach(shape => { shapes[shape.categoryName] = shape.score; });
+
+            // 1. 开心：只看嘴角上扬！去掉眯眼(eyeSquint)，防止悲伤/大哭时误判成开心！
+            let happyScore = (shapes['mouthSmileLeft'] + shapes['mouthSmileRight']) / 2;
+            
+            // 2. 伤心：眉毛和嘴，重点在嘴 (撇嘴 mouthFrown 权重极大，辅以八字眉 browInnerUp)。
+            // 关键：去掉了对皱眉(browDown)的惩罚，因为人哭的时候本来就会皱眉！
+            let sadScore = ((shapes['mouthFrownLeft'] * 10) + (shapes['mouthFrownRight'] * 10) + (shapes['browInnerUp'] * 3)) / 5;
+            sadScore = sadScore - (shapes['mouthSmileLeft'] * 5) - (shapes['mouthSmileRight'] * 5); // 笑了就扣分
+            sadScore = Math.max(0, sadScore); 
+            
+            // 3. 愤怒：重点在皱眉 (browDown)。
+            // 关键：如果嘴巴往下撇(mouthFrown)，说明是委屈想哭，狠狠扣除愤怒分！
+            let angryScore = ((shapes['browDownLeft'] * 10) + (shapes['browDownRight'] * 10) + shapes['noseSneerLeft'] + shapes['noseSneerRight']) / 4;
+            angryScore = angryScore - (shapes['mouthFrownLeft'] * 8) - (shapes['mouthFrownRight'] * 8) - (shapes['mouthSmileLeft'] * 5) - (shapes['mouthSmileRight'] * 5);
+            angryScore = Math.max(0, angryScore); 
+
+            let rawHappy = Math.min(happyScore * 200, 100); 
+            // 放大伤心倍数，让撇嘴更容易触发
+            let rawSad = Math.min(sadScore * 300, 100);     
+            let rawAngry = Math.min(angryScore * 200, 100); 
+
+            updateSmoothedEmotions(rawHappy, rawSad, rawAngry);
+        }
+
+        function updateSmoothedEmotions(targetHappy, targetSad, targetAngry) {
+            smoothedHappy += (targetHappy - smoothedHappy) * 0.1;
+            smoothedSad += (targetSad - smoothedSad) * 0.1;
+            smoothedAngry += (targetAngry - smoothedAngry) * 0.1;
+
+            document.getElementById('bar-happy').value = smoothedHappy;
+            document.getElementById('bar-sad').value = smoothedSad;
+            document.getElementById('bar-angry').value = smoothedAngry;
+
+            let buffer = 15; 
+            let newEmotion = currentLockedEmotion;
+
+            if (currentLockedEmotion === 'happy') {
+                if (smoothedSad > smoothedHappy + buffer) newEmotion = 'sad';
+                else if (smoothedAngry > smoothedHappy + buffer) newEmotion = 'angry';
+                else if (smoothedHappy < 10) newEmotion = 'neutral';
+            } else if (currentLockedEmotion === 'sad') {
+                if (smoothedHappy > smoothedSad + buffer) newEmotion = 'happy';
+                else if (smoothedAngry > smoothedSad + buffer) newEmotion = 'angry';
+                else if (smoothedSad < 10) newEmotion = 'neutral';
+            } else if (currentLockedEmotion === 'angry') {
+                if (smoothedHappy > smoothedAngry + buffer) newEmotion = 'happy';
+                else if (smoothedSad > smoothedAngry + buffer) newEmotion = 'sad';
+                else if (smoothedAngry < 10) newEmotion = 'neutral';
+            } else {
+                if (smoothedHappy > 15) newEmotion = 'happy';
+                else if (smoothedSad > 15) newEmotion = 'sad';
+                else if (smoothedAngry > 15) newEmotion = 'angry';
+            }
+
+            currentLockedEmotion = newEmotion;
+
+            let intensity = 0;
+            if (currentLockedEmotion === 'happy') intensity = smoothedHappy;
+            else if (currentLockedEmotion === 'sad') intensity = smoothedSad;
+            else if (currentLockedEmotion === 'angry') intensity = smoothedAngry;
+
+            if (window.setEmotion) {
+                window.setEmotion(currentLockedEmotion, intensity);
+            }
+
+            const brainText = document.getElementById('brain-text');
+            const brainBox = document.getElementById('brain-feedback');
+            const actionText = document.getElementById('action-text');
+            const actionBox = document.getElementById('action-feedback');
+
+            if (currentLockedEmotion === 'happy') {
+                brainText.innerHTML = "<strong style='color:#FFD700;'>Dopamine Surge:</strong><br>Dopamine and endorphins are flooding the brain's reward pathways, bringing intense pleasure and euphoria similar to a rollercoaster dive!";
+                brainBox.style.borderLeftColor = "#FFD700"; 
+                actionText.innerHTML = "<strong style='color:#FFD700;'>Enjoy the moment:</strong><br>Embrace this positive energy and have a wonderful day! Keep that smile shining!";
+                actionBox.style.borderLeftColor = "#FFD700";
+
+            } else if (currentLockedEmotion === 'sad') {
+                brainText.innerHTML = "<strong style='color:#4682B4;'>Serotonin Drop:</strong><br>Serotonin levels have dropped. The brain is processing emotional weight, much like the continuous, heavy raindrops in the pond right now.";
+                brainBox.style.borderLeftColor = "#4682B4"; 
+                actionText.innerHTML = "<strong style='color:#4682B4;'>Treat yourself:</strong><br>How about some sweet dessert? A little piece of cake or chocolate might help lift your spirits.";
+                actionBox.style.borderLeftColor = "#4682B4";
+
+            } else if (currentLockedEmotion === 'angry') {
+                brainText.innerHTML = "<strong style='color:#FF4500;'>Adrenaline Spike:</strong><br>Cortisol and adrenaline are surging! The amygdala is 'hijacking' the prefrontal cortex, accumulating pressure like an active volcano about to erupt!";
+                brainBox.style.borderLeftColor = "#FF4500"; 
+                actionText.innerHTML = "<strong style='color:#FF4500;'>Take a deep breath:</strong><br>Inhale slowly... Exhale... Give yourself a moment to cool down and let the tension melt away.";
+                actionBox.style.borderLeftColor = "#FF4500";
+
+            } else {
+                brainText.innerHTML = "<strong style='color:#888;'>Homeostasis:</strong><br>Your brain is currently in a calm resting state with stable neurotransmitter levels, waiting for emotional stimuli...";
+                brainBox.style.borderLeftColor = "#888";    
+                actionText.innerHTML = "<strong style='color:#888;'>Stay relaxed:</strong><br>Keep your natural pace and let your emotions flow freely.";
+                actionBox.style.borderLeftColor = "#888";
+            }
+        }
+
+        setupVision();
+    </script>
+</body>
+</html>

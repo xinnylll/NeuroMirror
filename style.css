@@ -1,0 +1,64 @@
+/* style.css */
+body {
+    margin: 0;
+    display: flex;
+    height: 100vh;
+    background-color: #111;
+    color: white;
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden; /* 防止出现滚动条 */
+}
+
+/* 左侧生成艺术画布容器 */
+#canvas-container {
+    flex: 3;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #000;
+}
+
+/* 右侧仪表盘 */
+#dashboard {
+    flex: 1;
+    padding: 30px;
+    background-color: #1a1a1a;
+    border-left: 2px solid #333;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    box-sizing: border-box;
+}
+
+h2 { margin-top: 0; color: #eee; }
+
+.status-text {
+    color: #888;
+    font-size: 0.9em;
+    margin-bottom: 30px;
+}
+
+label { 
+    margin-top: 15px; 
+    display: block; 
+    font-weight: bold; 
+}
+
+.emotion-bar {
+    width: 100%;
+    height: 25px;
+    margin-top: 8px;
+    appearance: none;
+}
+
+/* 进度条样式美化 */
+progress::-webkit-progress-bar { 
+    background-color: #333; 
+    border-radius: 5px; 
+}
+progress::-webkit-progress-value { 
+    border-radius: 5px; 
+}
+#bar-happy::-webkit-progress-value { background-color: #FFD700; } /* 开心：金色 */
+#bar-sad::-webkit-progress-value { background-color: #4682B4; }   /* 伤心：钢蓝色 */
+#bar-angry::-webkit-progress-value { background-color: #FF4500; } /* 愤怒：橙红色 */
